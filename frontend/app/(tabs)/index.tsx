@@ -3,11 +3,18 @@ import { Image } from 'expo-image';
 import { Link } from 'expo-router';
 import { View, Text,  StyleSheet } from 'react-native';
 
-
+import { SearchBar } from 'react-native-screens';
 export default function HomeScreen() {
   return (
     <View>
-      <Text>ads</Text>
+      <SearchBar/>
+
+      
+
+
+
+
+
 
 
     </View>
