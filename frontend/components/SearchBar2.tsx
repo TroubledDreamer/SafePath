@@ -120,7 +120,7 @@ const SearchBar: React.FC = () => {
   return (
     <View style={styles.container}>
       <GooglePlacesAutocomplete
-        placeholder="Search for destination…"
+        placeholder="Where to?"
         fetchDetails
         onPress={handlePlaceSelect}
         query={{
@@ -160,7 +160,7 @@ const SearchBar: React.FC = () => {
         <Text style={styles.debugText}>
           📍 Current: {currentLocation.latitude.toFixed(6)}, {currentLocation.longitude.toFixed(6)}
         </Text>
-        {countryCode && <Text style={styles.debugText}>🌍 Country: {countryCode}</Text>}
+        {/* {countryCode && <Text style={styles.debugText}>🌍 Country: {countryCode}</Text>} */}
         {destination && (
           <Text style={styles.debugText}>
             🎯 Destination: {destination.latitude.toFixed(6)}, {destination.longitude.toFixed(6)}

@@ -13,9 +13,9 @@ az account set --subscription "$SUB"
 LOC="East US 2"
 
 # Resource naming
-RG="spath-rg"
+RG="pnote-rg"
 ACR="spatheacr$RANDOM"          # Azure Container Registry (unique)
-ENV_NAME="spath-env"           # ACA Environment
+ENV_NAME="pnote-env"           # ACA Environment
 APP="spath-api"                # Your Container App name
 
 # Image info (your local image tag + container port)
@@ -25,7 +25,7 @@ PORT=5001
 # DB config (EDIT THESE to your real DB)
 DB_HOST="gym.mysql.database.azure.com"
 DB_PORT="3306"
-DB_NAME="gymDatabaseV1"
+DB_NAME="pathdatabase"
 DB_USER="carlyon"   # Azure MySQL often requires '@server' suffix
 DB_PASSWORD="MZ8C3KyvWkK9LH2"  # we'll store as a secret
 
@@ -33,7 +33,7 @@ DB_PASSWORD="MZ8C3KyvWkK9LH2"  # we'll store as a secret
 DATABASE_USER=carlyon
 DATABASE_PASSWORD=MZ8C3KyvWkK9LH2
 DATABASE_HOST=mysql-gym.mysql.database.azure.com
-DATABASE_NAME=gymDatabaseV1
+DATABASE_NAME=pathdatabase
 SECRET_KEY=sldkfnsodck
 MYSQL_SSL_CA=/backend/app/DigiCertGlobalRootG2.crt.pem
 
@@ -80,13 +80,13 @@ docker buildx ls
 
 NEW_TAG="amd64-$(date +%Y%m%d%H%M)"
 docker buildx build --platform linux/amd64 \
-  -t "$ACR_LOGIN_SERVER/pnote-backend:$NEW_TAG" \
+  -t "$ACR_LOGIN_SERVER/spath-backend:$NEW_TAG" \
   -f Dockerfile \
   --push .
 
 
 az containerapp update -g "$RG" -n "$APP" \
-  --image "$ACR_LOGIN_SERVER/pnote-backend:$NEW_TAG"
+  --image "$ACR_LOGIN_SERVER/spath-backend:$NEW_TAG"
 ==================================
 
 az acr update -n "$ACR" --admin-enabled true

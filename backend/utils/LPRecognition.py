@@ -1,242 +1,281 @@
 import os
 import re
 import json
+from io import BytesIO
+from pathlib import Path
+
+import numpy as np
 import requests
 from PIL import Image
-import numpy as np
-from ultralytics import YOLO
-from io import BytesIO
+
+# Torch & Ultralytics
+try:
+    import torch
+except Exception as e:
+    raise RuntimeError(
+        "PyTorch is required but not installed or failed to import. "
+        "See setup steps below."
+    ) from e
+
+try:
+    from ultralytics import YOLO
+except Exception as e:
+    raise RuntimeError(
+        "Ultralytics (YOLO) is required but not installed. "
+        "Run: pip install ultralytics"
+    ) from e
+
+# .env support for OCR key
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    # dotenv is optional; if not installed we'll fall back to environment only
+    pass
 
 # ---------------------------
-# CONFIGURATION & ROBUST PATH RESOLUTION (RELATIVE TO SCRIPT'S LOCATION)
+# CONFIGURATION
 # ---------------------------
-# Define constants
-# Note: These are now relative paths from the script's directory (/backend/utils/)
 IMAGE_FOLDER_RELATIVE = "LPlates/images"
 MODEL_FOLDER_RELATIVE = "LPlates/models"
 YOLO_MODEL_NAME = "LP-detection.pt"
 JSON_PATH_NAME = "LPlates_results.json"
-OCR_API_KEY = "K87899988388957"
 
-# Get the absolute path of the directory where the current script resides
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Prefer env var; fallback to literal if present (discouraged)
+OCR_API_KEY = os.environ.get("OCR_API_KEY") or os.environ.get("EXPO_PUBLIC_OCR_API_KEY") or os.environ.get("NEXT_PUBLIC_OCR_API_KEY")
+if not OCR_API_KEY:
+    # LAST RESORT: let it run but warn loudly
+    print("WARNING: OCR_API_KEY not found in environment. Create a .env with OCR_API_KEY=... or export it before running.")
+    OCR_API_KEY = "REPLACE_ME_OR_SET_ENV"
 
-# Construct absolute paths directly from the script's directory (SCRIPT_DIR)
-# This assumes the structure: /utils/LPlates/{images, models}
-MODEL_FOLDER = os.path.join(SCRIPT_DIR, MODEL_FOLDER_RELATIVE)
-YOLO_MODEL_PATH = os.path.join(MODEL_FOLDER, YOLO_MODEL_NAME)
-IMAGE_FOLDER = os.path.join(SCRIPT_DIR, IMAGE_FOLDER_RELATIVE)
-
-# Save JSON result one level up (in the /backend/utils/ folder) for convenience
-JSON_PATH = os.path.join(SCRIPT_DIR, JSON_PATH_NAME) 
-
-# --- Setup: Create necessary folders if they don't exist ---
-for folder in [IMAGE_FOLDER, MODEL_FOLDER]:
-    if not os.path.isdir(folder):
-        try:
-            os.makedirs(folder)
-            print(f"Created directory: '{folder}' relative to script.")
-        except OSError as e:
-            print(f"Error creating directory '{folder}': {e}")
-            exit()
+# Resolve paths relative to this file
+SCRIPT_DIR = Path(__file__).resolve().parent
+MODEL_FOLDER = SCRIPT_DIR / MODEL_FOLDER_RELATIVE
+YOLO_MODEL_PATH = MODEL_FOLDER / YOLO_MODEL_NAME
+IMAGE_FOLDER = SCRIPT_DIR / IMAGE_FOLDER_RELATIVE
+JSON_PATH = SCRIPT_DIR / JSON_PATH_NAME
 
 # ---------------------------
-# INITIALIZE YOLO MODEL 
+# DEVICE SELECTION (Mac-friendly)
 # ---------------------------
-try:
-    print("-" * 50)
-    print(f"DEBUG: Calculated Model Path: {YOLO_MODEL_PATH}")
-    print("-" * 50)
-    
-    # Check if the model file is physically present at the calculated path
-    if not os.path.exists(YOLO_MODEL_PATH):
-         raise FileNotFoundError(
-             f"Model file not found at '{YOLO_MODEL_PATH}'. "
-             f"Please ensure your '{YOLO_MODEL_NAME}' is inside the '{MODEL_FOLDER_RELATIVE}' folder, relative to the script."
-         )
-         
-    # If file exists, load the model
-    yolo_model = YOLO(YOLO_MODEL_PATH)
-    print("SUCCESS: YOLO model loaded successfully.")
+def select_device():
+    """
+    Returns a device spec compatible with Ultralytics:
+      - 'mps' on Apple Silicon if available (PyTorch MPS backend)
+      - 0 for CUDA GPU if available
+      - 'cpu' otherwise
+    """
+    try:
+        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            return "mps"
+        if torch.cuda.is_available():
+            return 0  # first CUDA device
+    except Exception:
+        pass
+    return "cpu"
 
-except Exception as e:
-    print(f"Error loading YOLO model: {e}")
-    exit()
+DEVICE = select_device()
+print(f"Using device: {DEVICE}")
 
 # ---------------------------
-# HELPER FUNCTION: VALIDATE PLATE (FINE-TUNED)
+# VALIDATE FOLDERS / CREATE IF MISSING
 # ---------------------------
-def extract_jamaican_plate(text):
+for p in (IMAGE_FOLDER, MODEL_FOLDER):
+    if not p.exists():
+        p.mkdir(parents=True, exist_ok=True)
+        print(f"Created directory: {p}")
+
+# ---------------------------
+# HELPER: EXTRACT JAMAICAN PLATE
+# ---------------------------
+def extract_jamaican_plate(text: str):
     """
     Extract a valid Jamaican license plate from OCR text.
-    Includes common Private, Commercial, Public, and Old formats, 
-    with a correction for Public Transport (Taxi) plates starting with 'P'.
+    Covers modern/old private, commercial/public, and some government formats,
+    with correction for common 'P' misreads on taxi plates.
     """
-    # Clean text: remove non-alphanumeric chars and convert to uppercase
     text = re.sub(r"[^A-Z0-9]", "", text.upper())
 
-    # --- Jamaican Plate Formats in Priority Order ---
+    # 1. Modern Private: ABC123 or ABC1234
+    m = re.search(r"([A-Z]{3}[0-9]{3,4})", text)
+    if m:
+        return m.group(1)
 
-    # 1. Modern Private: 3 Letters + 3 or 4 Digits (e.g., ABC123, ABC1234)
-    match = re.search(r"([A-Z]{3}[0-9]{3,4})", text)
-    if match:
-        return match.group(1)
-
-    # 2. Old/Dealer Private/Commercial: 2 Letters + 4 Digits (e.g., PF8417, AB1234)
-    match = re.search(r"([A-Z]{2}[0-9]{4})", text)
-    if match:
-        # **APPLY TAXI CORRECTION HERE (A2D4)**
-        plate = match.group(1)
-        # If the first letter is R, F, S, or B (common misreads of P) AND the
-        # rest is a numeric format, assume 'P' for Taxi/Public.
+    # 2. Old/Dealer/Commercial-like: AB1234 (with taxi P-correction)
+    m = re.search(r"([A-Z]{2}[0-9]{4})", text)
+    if m:
+        plate = m.group(1)
         if plate[0] in ['R', 'F', 'S', 'B'] and plate[1].isalpha():
-             return 'P' + plate[1:]
+            return 'P' + plate[1:]
         return plate
 
-
-    # 3. Commercial/Public (e.g., C A1234, T A1234, P A1234) - 1 Letter + 4-5 Digits
-    match = re.search(r"([A-Z][0-9]{4,5})", text)
-    if match:
-        plate = match.group(1)
-        # **APPLY TAXI CORRECTION HERE (A1D4/5)**
-        # If first char is R, F, S, or B (common misreads of P) 
+    # 3. Commercial/Public: P1234/P12345 (with taxi P-correction)
+    m = re.search(r"([A-Z][0-9]{4,5})", text)
+    if m:
+        plate = m.group(1)
         if plate[0] in ['R', 'F', 'S', 'B']:
-             return 'P' + plate[1:]
+            return 'P' + plate[1:]
         return plate
-        
-    # 4. Old Private: 4 Digits + 2 Letters (e.g., 8676GP)
-    match = re.search(r"([0-9]{4}[A-Z]{2})", text)
-    if match:
-        return match.group(1)
 
-    # 5. Commercial/Public (Reversed): 3 Digits + 3 Letters (e.g., 123ABC)
-    match = re.search(r"([0-9]{3}[A-Z]{3})", text)
-    if match:
-        return match.group(1)
+    # 4. Old Private: 1234AB
+    m = re.search(r"([0-9]{4}[A-Z]{2})", text)
+    if m:
+        return m.group(1)
 
-    # 6. Government: GOV + 3 Digits (e.g., GOV123)
-    match = re.search(r"(GOV[0-9]{3})", text)
-    if match:
-        return match.group(1)
+    # 5. Reversed Commercial/Public: 123ABC
+    m = re.search(r"([0-9]{3}[A-Z]{3})", text)
+    if m:
+        return m.group(1)
 
-    # Fallback: 6–7 alphanumeric chars (Last resort)
-    match = re.search(r"([A-Z0-9]{6,7})", text)
-    if match:
-        return match.group(1)
+    # 6. Government: GOV123
+    m = re.search(r"(GOV[0-9]{3})", text)
+    if m:
+        return m.group(1)
+
+    # Fallback: 6–7 alphanumerics
+    m = re.search(r"([A-Z0-9]{6,7})", text)
+    if m:
+        return m.group(1)
 
     return None
 
 # ---------------------------
-# PROCESS IMAGES
+# YOLO LOAD
 # ---------------------------
-results_json = {}
-files_to_process = [
-    filename for filename in os.listdir(IMAGE_FOLDER) 
-    if filename.lower().endswith((".jpg", ".png", ".jpeg"))
-]
+def load_model_or_die(path: Path) -> YOLO:
+    print("-" * 60)
+    print(f"DEBUG: Model path → {path}")
+    print("-" * 60)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Model file not found at '{path}'. "
+            f"Place '{YOLO_MODEL_NAME}' inside '{MODEL_FOLDER_RELATIVE}' (relative to this script)."
+        )
+    model = YOLO(str(path))
+    print("SUCCESS: YOLO model loaded.")
+    return model
 
-if not files_to_process:
-    print(f"No image files found in '{IMAGE_FOLDER}'. Place images to process there.")
-else:
-    for filename in files_to_process:
-        image_path = os.path.join(IMAGE_FOLDER, filename)
-        print(f"\nProcessing: {filename}")
+# ---------------------------
+# OCR CALL
+# ---------------------------
+def ocr_space_image_png_bytes(img_bytes: bytes, api_key: str) -> str:
+    """
+    Sends PNG bytes to OCR.Space and returns raw text (may be empty).
+    """
+    resp = requests.post(
+        "https://api.ocr.space/parse/image",
+        files={"file": ("plate.png", img_bytes)},
+        data={
+            "apikey": api_key,
+            "language": "eng",
+            "isOverlayRequired": False,
+            "OCREngine": 2
+        },
+        timeout=60
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
-        # --- YOLO DETECTION ---
-        # Note: Suppressing verbose output
-        results = yolo_model(image_path, verbose=False)
-        boxes = results[0].boxes.xyxy.cpu().numpy()
-        confs = results[0].boxes.conf.cpu().numpy()
+    if data.get("IsErroredOnProcessing"):
+        # OCR.Space sometimes returns list in ErrorMessage
+        emsg = data.get("ErrorMessage") or data.get("ErrorDetails") or "Unknown OCR error"
+        raise RuntimeError(f"OCR API error: {emsg}")
 
-        if len(boxes) == 0:
-            print("No license plate detected.")
-            results_json[filename] = None
-            continue
+    try:
+        parsed = data["ParsedResults"][0]["ParsedText"]
+        return parsed or ""
+    except (KeyError, IndexError):
+        return ""
 
-        # Take highest-confidence box
-        best_idx = np.argmax(confs)
-        xmin, ymin, xmax, ymax = boxes[best_idx][:4].astype(int)
+# ---------------------------
+# MAIN
+# ---------------------------
+def main():
+    # Load model
+    try:
+        model = load_model_or_die(YOLO_MODEL_PATH)
+    except Exception as e:
+        print(f"Error loading YOLO model: {e}")
+        return
+
+    # Gather images
+    files = [p for p in IMAGE_FOLDER.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+    if not files:
+        print(f"No image files found in '{IMAGE_FOLDER}'. Put images there and re-run.")
+        return
+
+    results_json = {}
+
+    for img_path in files:
+        print(f"\nProcessing: {img_path.name}")
 
         try:
-            original_image = Image.open(image_path)
-            # Add a small padding (15 pixels) for better OCR context 
-            padding = 15
-            xmin = max(0, xmin - padding)
-            ymin = max(0, ymin - padding)
-            xmax = min(original_image.width, xmax + padding)
-            ymax = min(original_image.height, ymax + padding)
-            
-            cropped_image = original_image.crop((xmin, ymin, xmax, ymax))
-
-            # Increase upscale factor for low-res or difficult plates (factor of 3)
-            cropped_image = cropped_image.resize(
-                (cropped_image.width * 3, cropped_image.height * 3),
-                Image.LANCZOS
-            )
-        except Exception as e:
-            print(f"Error cropping image: {e}")
-            results_json[filename] = None
-            continue
-
-
-        # --- OCR via OCR.Space API ---
-        buffered = BytesIO()
-        cropped_image.save(buffered, format="PNG")
-        img_bytes = buffered.getvalue()
-
-        try:
-            response = requests.post(
-                "https://api.ocr.space/parse/image",
-                files={"file": ("plate.png", img_bytes)},
-                data={
-                    "apikey": OCR_API_KEY,
-                    "language": "eng",
-                    "isOverlayRequired": False,
-                    "OCREngine": 2  # Advanced engine for letters + numbers
-                }
-            )
-            response.raise_for_status() # Check for HTTP errors
-
-            result_json = response.json()
-            if result_json.get("IsErroredOnProcessing"):
-                print("OCR API error:", result_json.get("ErrorMessage"))
-                results_json[filename] = None
+            # Run detection (quiet)
+            results = model(str(img_path), verbose=False, device=DEVICE)
+            boxes = results[0].boxes
+            if boxes is None or boxes.xyxy is None or len(boxes) == 0:
+                print("No license plate detected.")
+                results_json[img_path.name] = None
                 continue
 
-            # Extract OCR text
-            parsed_text = ""
+            xyxy = boxes.xyxy.cpu().numpy()
+            confs = boxes.conf.cpu().numpy()
+            best_idx = int(np.argmax(confs))
+            xmin, ymin, xmax, ymax = xyxy[best_idx][:4].astype(int)
+
+            # Crop with padding
+            with Image.open(img_path) as original:
+                padding = 15
+                xmin = max(0, xmin - padding)
+                ymin = max(0, ymin - padding)
+                xmax = min(original.width,  xmax + padding)
+                ymax = min(original.height, ymax + padding)
+
+                cropped = original.crop((xmin, ymin, xmax, ymax))
+                # Upscale for OCR
+                cropped = cropped.resize(
+                    (cropped.width * 3, cropped.height * 3),
+                    Image.LANCZOS
+                )
+
+                buf = BytesIO()
+                cropped.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+
+            # OCR
             try:
-                parsed_text = result_json["ParsedResults"][0]["ParsedText"]
-            except (KeyError, IndexError):
-                parsed_text = ""
-                
-            print(f"Raw OCR Text: '{parsed_text.strip().replace('\n', ' ')}'")
+                parsed_text = ocr_space_image_png_bytes(img_bytes, OCR_API_KEY)
+            except requests.exceptions.RequestException as e:
+                print(f"Network/API Request Error: {e}")
+                results_json[img_path.name] = None
+                continue
+            except Exception as e:
+                print(f"OCR error: {e}")
+                results_json[img_path.name] = None
+                continue
 
-            # --- EXTRACT VALID JAMAICAN PLATE ---
-            plate_text_clean = extract_jamaican_plate(parsed_text)
+            clean_preview = parsed_text.strip().replace("\n", " ")
+            print(f"Raw OCR Text: '{clean_preview}'")
 
-            if plate_text_clean:
-                print(f"Valid Jamaican Plate: {plate_text_clean}")
-                results_json[filename] = plate_text_clean
+            plate = extract_jamaican_plate(parsed_text)
+            if plate:
+                print(f"Valid Jamaican Plate: {plate}")
+                results_json[img_path.name] = plate
             else:
                 print("No valid Jamaican plate detected after OCR processing.")
-                results_json[filename] = None
+                results_json[img_path.name] = None
 
-        except requests.exceptions.RequestException as e:
-            print(f"Network/API Request Error: {e}")
-            results_json[filename] = None
         except Exception as e:
-            print(f"An unexpected error occurred during OCR: {e}")
-            results_json[filename] = None
+            print(f"Unexpected error on {img_path.name}: {e}")
+            results_json[img_path.name] = None
 
+    if results_json:
+        try:
+            with open(JSON_PATH, "w") as f:
+                json.dump(results_json, f, indent=4)
+            print(f"\n✨ Done. Results saved to: {JSON_PATH}")
+        except Exception as e:
+            print(f"\nError saving JSON file: {e}")
 
-# ---------------------------
-# SAVE TO JSON
-# ---------------------------
-if results_json:
-    try:
-        with open(JSON_PATH, "w") as f:
-            json.dump(results_json, f, indent=4)
-        print(f"\n✨ All images processed. Results saved in {JSON_PATH}")
-    except Exception as e:
-        print(f"\nError saving JSON file: {e}")
+if __name__ == "__main__":
+    main()

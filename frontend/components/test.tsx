@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import SearchBar2 from '@/components/SearchBar2';
 
 const { height } = Dimensions.get('window');
 
@@ -106,12 +105,10 @@ export default function HomeScreen() {
             blurRadius={0.5}
           >
             <View style={styles.overlay}>
-              {/* <TouchableOpacity style={styles.searchBar}>
+              <TouchableOpacity style={styles.searchBar}>
                 <Ionicons name="search" size={20} color="#888" />
                 <Text style={styles.searchText}>Where to?</Text>
-              </TouchableOpacity> */}
-              <SearchBar2/>
-              
+              </TouchableOpacity>
             </View>
           </ImageBackground>
         </View>
