@@ -1,21 +1,20 @@
 import { Image } from 'expo-image';
 
 import { Link } from 'expo-router';
-import { View, Text,  StyleSheet } from 'react-native';
+import { View, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
+import SearchBar from '@/components/searchBar';
 
 export default function HomeScreen() {
   return (
     <View>
 
+        <ScrollView>
 
-      
+                  <View style={{marginTop: 100}}> 
 
-      
-
-
-
-
-
+            </View>
+          <SearchBar/>
+        </ScrollView>
 
 
     </View>

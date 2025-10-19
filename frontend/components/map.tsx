@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 const { height } = Dimensions.get('window'); // for proportional sizing
 
-export function map() {
+export function mapk() {
   // to be able to pull name from DB
   const userName = 'Elle';
 
