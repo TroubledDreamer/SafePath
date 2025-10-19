@@ -17,7 +17,7 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import SearchBar2 from '@/components/SearchBar2';
 const { height } = Dimensions.get('window');
-
+import { useCreateDriver } from '@/lib/api/Driver/hooks';
 export default function HomeScreen() {
   const userName = 'Elle';
   const [showCamera, setShowCamera] = useState(false);
@@ -28,6 +28,18 @@ export default function HomeScreen() {
 
   const [location, setLocation] = useState<any>(null);
   const [region, setRegion] = useState<any>(null);
+
+  
+  const handlePlate = async () => {
+    const payload = {
+      plate: setCaption,
+      car_type: "test",
+    
+
+    }
+  
+
+  };
 
   useEffect(() => {
     (async () => {
@@ -87,6 +99,7 @@ export default function HomeScreen() {
                 onPress={() => {
                   setPhoto(null);
                   setShowCamera(false);
+                  handlePlate();
                 }}
               >
                 <Text style={styles.closeText}>Save & Close</Text>
