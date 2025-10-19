@@ -1,9 +1,26 @@
-from app import create_app
-import os
+# app/__init__.py
+from flask import Flask
+from app.models import db
+# from app.config import Config  # if you have a Config class
 
-app = create_app()
+def create_app():
+    app = Flask(__name__)
 
-if __name__ == "__main__":
-    # from waitress import serve
-    # serve(app, host="0.0.0.0", port=int(os.getenv("PORT", 5001)))
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5001)))
+    # Basic config (adjust to your config module)
+    app.config.from_object('app.config.Config')
+
+    # Init extensions
+    db.init_app(app)
+
+    # Register blueprints (import inside to avoid circular imports)
+    from app.routes.user_routes import api as user_routes
+    # from app.routes.auth_routes import auth_routes
+    app.register_blueprint(user_routes)
+    # app.register_blueprint(auth_routes)
+
+    # Health check / root
+    @app.get("/")
+    def index():
+        return {"message": "API running successfully!"}
+
+    return app

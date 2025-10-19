@@ -1,0 +1,30 @@
+CREATE DATABASE Data;
+USE Data;
+
+CREATE TABLE Users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    gender VARCHAR(50) NOT NULL,
+    height VARCHAR(50) NOT NULL,
+    phone_number VARCHAR(50) NOT NULL UNIQUE,
+    image VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE Drivers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    plate VARCHAR(50) NOT NULL UNIQUE, 
+    car_type VARCHAR(100) NOT NULL,
+    user_id INT,
+    FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE 
+);
+
+CREATE TABLE Emergency_Contacts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    display_name VARCHAR(100) NOT NULL,
+    contact_phone VARCHAR(50) NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE
+);
