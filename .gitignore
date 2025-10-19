@@ -1,4 +1,16 @@
 .env
 *.env
+<<<<<<< HEAD
 setup/__pycache__/
 *.py[cod]
+=======
+# Python
+venv/
+.env
+*.pyc
+__pycache__/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+>>>>>>> backend
