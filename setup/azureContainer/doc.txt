@@ -1,0 +1,161 @@
+
+cammands i used to set up the backend
+
+az login
+az account list --output table
+# pick a subscription id from the table, then:
+SUB="717efa65-29aa-4f41-953a-4dbceb14f71b"
+az account set --subscription "$SUB"
+
+=================
+
+# Region close to you
+LOC="East US 2"
+
+# Resource naming
+RG="spath-rg"
+ACR="spatheacr$RANDOM"          # Azure Container Registry (unique)
+ENV_NAME="spath-env"           # ACA Environment
+APP="spath-api"                # Your Container App name
+
+# Image info (your local image tag + container port)
+LOCAL_IMAGE="spath-backend:latest"
+PORT=5001
+
+# DB config (EDIT THESE to your real DB)
+DB_HOST="gym.mysql.database.azure.com"
+DB_PORT="3306"
+DB_NAME="gymDatabaseV1"
+DB_USER="carlyon"   # Azure MySQL often requires '@server' suffix
+DB_PASSWORD="MZ8C3KyvWkK9LH2"  # we'll store as a secret
+
+
+DATABASE_USER=carlyon
+DATABASE_PASSWORD=MZ8C3KyvWkK9LH2
+DATABASE_HOST=mysql-gym.mysql.database.azure.com
+DATABASE_NAME=gymDatabaseV1
+SECRET_KEY=sldkfnsodck
+MYSQL_SSL_CA=/backend/app/DigiCertGlobalRootG2.crt.pem
+
+
+============================
+
+# ACR (the one failing right now)
+az provider register --namespace Microsoft.ContainerRegistry
+
+# Container Apps + logs (you’ll need these too)
+az provider register --namespace Microsoft.App
+az provider register --namespace Microsoft.OperationalInsights
+
+
+============================
+
+# Create resource group + ACR
+az group create -n "$RG" -l "$LOC"
+az acr create -n "$ACR" -g "$RG" --sku Basic
+az acr login -n "$ACR"
+
+# Get the ACR login server and push the image
+ACR_LOGIN_SERVER=$(az acr show -n "$ACR" -g "$RG" --query loginServer -o tsv)
+
+# Build your image (adjust -f if your Dockerfile lives in ./docker/Dockerfile)
+docker build -t "$LOCAL_IMAGE" .                         # or: docker build -t "$LOCAL_IMAGE" -f docker/Dockerfile .
+docker tag "$LOCAL_IMAGE" "$ACR_LOGIN_SERVER/$LOCAL_IMAGE"
+docker push "$ACR_LOGIN_SERVER/$LOCAL_IMAGE"
+
+
+
+=========================
+
+az extension add -n containerapp --yes
+az provider register --namespace Microsoft.App --wait
+az provider register --namespace Microsoft.OperationalInsights --wait
+
+az containerapp env create -g "$RG" -n "$ENV_NAME" -l "$LOC"
+
+
+================================
+
+docker buildx ls
+
+NEW_TAG="amd64-$(date +%Y%m%d%H%M)"
+docker buildx build --platform linux/amd64 \
+  -t "$ACR_LOGIN_SERVER/pnote-backend:$NEW_TAG" \
+  -f Dockerfile \
+  --push .
+
+
+az containerapp update -g "$RG" -n "$APP" \
+  --image "$ACR_LOGIN_SERVER/pnote-backend:$NEW_TAG"
+==================================
+
+az acr update -n "$ACR" --admin-enabled true
+
+ACR_USER=$(az acr credential show -n "$ACR" --query username -o tsv)
+ACR_PASS=$(az acr credential show -n "$ACR" --query passwords[0].value -o tsv)
+
+# Create the container app with external ingress
+az containerapp create -g "$RG" -n "$APP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/$LOCAL_IMAGE" \
+  --ingress external --target-port "$PORT" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USER" --registry-password "$ACR_PASS" \
+  --secrets db-password="$DATABASE_PASSWORD" \
+  --env-vars PORT="$PORT" FLASK_ENV=production \
+            DATABASE_HOST="$DATABASE_HOST" DATABASE_NAME="$DATABASE_NAME" DATABASE_USER="$DATABASE_USER" \
+            DB_SSL=true MYSQL_SSL_CA="$MYSQL_SSL_CA" \
+            SECRET_KEY="$SECRET_KEY" \
+            DATABASE_PASSWORD=secretref:db-password \
+  --min-replicas 1 --max-replicas 3
+
+================
+
+# What’s your login server (just to be sure)?
+echo "$ACR_LOGIN_SERVER"
+
+# List repos in your ACR
+az acr repository list -n "$ACR" -o table
+
+# Pick your repo (e.g., pnote-backend), then list its tags
+az acr repository show-tags -n "$ACR" --repository pnote-backend -o table
+
+
+
+===============
+export IMG_REPO="pnote-backend"          
+export IMG_TAG="amd64-202509300014"
+
+IMAGE="$ACR_LOGIN_SERVER/$IMG_REPO:$IMG_TAG"
+echo "$IMAGE"  
+
+================
+
+  az containerapp create -g "$RG" -n "$APP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/$IMG_REPO:$IMG_TAG" \
+  --ingress external --target-port "$PORT" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USER" --registry-password "$ACR_PASS" \
+  --secrets db-password="$DATABASE_PASSWORD" \
+  --env-vars \
+    PORT="$PORT" \
+    FLASK_ENV=production \
+    DATABASE_HOST="$DATABASE_HOST" \
+    DATABASE_NAME="$DATABASE_NAME" \
+    DATABASE_USER="$DATABASE_USER" \
+    DB_SSL=true \
+    DB_SSL_CA=/etc/ssl/certs/ca-certificates.crt \
+    MYSQL_SSL_CA="$MYSQL_SSL_CA" \
+    SECRET_KEY="$SECRET_KEY" \
+    DATABASE_PASSWORD=secretref:db-password \
+  --min-replicas 1 --max-replicas 3
+
+
+
+=============
+
+APP_URL=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+
+
+az containerapp logs show -g "$RG" -n "$APP" --follow

@@ -1,0 +1,22 @@
+npm start
+
+npm i -g eas-cli
+
+EXPO_PUBLIC_API_BASE_URL=https://pnote-api.bravebush-0c20dff7.eastus2.azurecontainerapps.io
+
+eas secret:create --name EXPO_PUBLIC_API_BASE_URL --value https://pnote-api.bravebush-0c20dff7.eastus2.azurecontainerapps.io
+
+eas env:create --name EXPO_PUBLIC_API_BASE_URL \
+  --value https://pnote-api.bravebush-0c20dff7.eastus2.azurecontainerapps.io \
+  --scope project
+
+eas env:list
+
+eas project:info
+
+eas build --profile preview --platform android
+
+# (after expo added updates config, you re-ran:)
+eas build --profile preview --platform android
+
+eas build --profile preview --platform ios
