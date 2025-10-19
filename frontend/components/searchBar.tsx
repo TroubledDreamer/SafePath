@@ -19,9 +19,10 @@ const SearchBar: React.FC = () => {
   const [destinationName, setDestinationName] = useState<string>('');
   const [loadingLocation, setLoadingLocation] = useState<boolean>(true);
 
-  // Get user's current location
   useEffect(() => {
-    const getLocation = async () => {
+    let subscription: Location.LocationSubscription | null = null;
+
+    const startTracking = async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
@@ -30,23 +31,36 @@ const SearchBar: React.FC = () => {
           return;
         }
 
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.BestForNavigation,
-        });
-
-        setCurrentLocation({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        });
+        // Use watchPositionAsync for live updates
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.BestForNavigation,
+            timeInterval: 1000, // update every second
+            distanceInterval: 0, // any movement
+          },
+          (loc) => {
+            const coords = {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+            };
+            console.log('📍 Live current location:', coords);
+            setCurrentLocation(coords);
+            setLoadingLocation(false);
+          }
+        );
       } catch (err) {
         console.error('Error fetching location:', err);
         Alert.alert('Error', 'Failed to get current location.');
-      } finally {
         setLoadingLocation(false);
       }
     };
 
-    getLocation();
+    startTracking();
+
+    // Clean up subscription on unmount
+    return () => {
+      subscription?.remove();
+    };
   }, []);
 
   const handlePlaceSelect = (data: any, details: GooglePlaceDetail | null = null) => {
@@ -107,11 +121,11 @@ const SearchBar: React.FC = () => {
               listView: styles.listView,
               row: styles.row,
             }}
-            predefinedPlaces={[]} // prevents filter / onFocus errors
+            predefinedPlaces={[]}
             textInputProps={{
               placeholderTextColor: '#555',
               returnKeyType: 'search',
-              onFocus: () => {}, // ensures onFocus exists
+              onFocus: () => {},
             }}
           />
 
