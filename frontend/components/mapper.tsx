@@ -11,7 +11,7 @@ const GOOGLE_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
   (Constants?.expoConfig?.extra as any)?.googleMapsApiKey ||
   '';
-
+console.log(GOOGLE_KEY);
 type MapperProps = {
   origin?: LatLng;
   destination?: LatLng;
