@@ -1,50 +1,96 @@
 # schemas.py
-from marshmallow import Schema, fields, validate, validates, ValidationError
-from app.models import User, Driver, EmergencyContact
+from marshmallow import Schema, fields, validate, validates, validates_schema, ValidationError
+from app.models import User, Driver, UserContact   # <-- changed from EmergencyContact to UserContact
 from app import db
 
-
-def validate_unique_email(email):
-    if db.session.query(User).filter_by(email=email).first():
+# --------- Helpers ---------
+def validate_unique_email(email, *, exclude_user_id=None):
+    q = db.session.query(User).filter(User.email == email)
+    if exclude_user_id is not None:
+        q = q.filter(User.id != exclude_user_id)
+    if db.session.query(q.exists()).scalar():
         raise ValidationError("That email is already taken.")
 
-
-
+# --------- Schemas ---------
 class UserInfoSchema(Schema):
     id = fields.Int(dump_only=True)
     user_id = fields.Int(dump_only=True)
-    gender = fields.Str(required=True, validate=validate.OneOf(['M','F','Other']))
-    height = fields.Decimal(as_string=True)
+    gender = fields.Str(required=True, validate=validate.OneOf(['M', 'F', 'Other']))
+    height = fields.Decimal(as_string=True)  # store as string to avoid float issues; map to DECIMAL in DB
     date_of_birth = fields.Date(required=True)
-    phone_number = fields.Int(dump_only=True)
-
+    # phone is VARCHAR(50) in DB; don't use Int (leading +, spaces, etc.)
+    phone_number = fields.String(validate=validate.Length(max=50))
 
 class UserSchema(Schema):
     id = fields.Int(dump_only=True)
     name = fields.Str(required=True, validate=validate.Length(max=100))
-    email = fields.Email(required=True, validate=validate_unique_email)
+    email = fields.Email(required=True)
     password = fields.Str(required=True, load_only=True)
     created_at = fields.DateTime(dump_only=True)
-    info = fields.Nested(UserInfoSchema, attribute="user_information", required=True)
+    # Allow nested info on create; not strictly required for all updates
+    info = fields.Nested(UserInfoSchema, attribute="user_information", required=False)
 
+    # Optionally expose contacts (dump only)
+    contacts = fields.List(
+        fields.Nested(lambda: UserContactSchema(exclude=("user_id",))),
+        dump_only=True,
+        attribute="contacts"  # relationship on User model
+    )
 
-
+    @validates("email")
+    def _unique_email(self, value, **kwargs):
+        # If updating, set schema.context["user_id"] to current user id so we don't flag self as duplicate
+        exclude_id = self.context.get("user_id") if hasattr(self, "context") else None
+        validate_unique_email(value, exclude_user_id=exclude_id)
 
 class DriverSchema(Schema):
     id = fields.Int(dump_only=True)
     plate = fields.String(required=True, validate=validate.Length(max=50))
     car_type = fields.String(required=True, validate=validate.Length(max=100))
     user_id = fields.Int(required=True)
-    date = fields.DateTime()
+    # created/updated timestamps can be dump_only if present on model
+    created_at = fields.DateTime(dump_only=True)
+    updated_at = fields.DateTime(dump_only=True)
 
-    
-
-
-class EmergencyContactSchema(Schema):
-    id = fields.Int(dump_only=True)
+class UserContactSchema(Schema):
+    """
+    Self-referential contacts:
+    PRIMARY KEY (user_id, contact_user_id)
+    """
+    # owner of the contact list
     user_id = fields.Int(required=True)
-    display_name = fields.String(required=True, validate=validate.Length(max=100))
-    contact_phone = fields.String(required=True, validate=validate.Length(max=50))
+    # the contact (another user)
+    contact_user_id = fields.Int(required=True)
+    label = fields.String(validate=validate.Length(max=100))
+    is_emergency = fields.Boolean(load_default=False)
+    created_at = fields.DateTime(dump_only=True)
 
+    @validates_schema
+    def _not_self(self, data, **kwargs):
+        if data.get("user_id") == data.get("contact_user_id"):
+            raise ValidationError("A user cannot add themselves as a contact.", field_name="contact_user_id")
 
+    @validates_schema
+    def _pair_unique(self, data, **kwargs):
+        # Enforce (user_id, contact_user_id) uniqueness at the app layer (DB also has PK/UNIQUE)
+        uid = data.get("user_id")
+        cid = data.get("contact_user_id")
+        if uid is None or cid is None:
+            return
+        exists = (
+            db.session.query(UserContact)
+            .filter(UserContact.user_id == uid, UserContact.contact_user_id == cid)
+            .first()
+        )
+        if exists:
+            raise ValidationError("This contact already exists.", field_name="contact_user_id")
 
+    @validates("user_id")
+    def _user_exists(self, value, **kwargs):
+        if not db.session.query(User.id).filter_by(id=value).first():
+            raise ValidationError("User not found.")
+
+    @validates("contact_user_id")
+    def _contact_user_exists(self, value, **kwargs):
+        if not db.session.query(User.id).filter_by(id=value).first():
+            raise ValidationError("Contact user not found.")
