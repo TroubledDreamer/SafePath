@@ -1,108 +1,30 @@
-// SearchBar.tsx
-import 'react-native-get-random-values'; // required for uuid
-import React, { useEffect, useState } from 'react';
+import 'react-native-get-random-values';
+import React, { useState } from 'react';
 import { View, StyleSheet, Text, Alert, ActivityIndicator, TouchableOpacity, TextInput, FlatList, Platform, Keyboard } from 'react-native';
-import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { useState as useHookState } from 'react';
+import { LocationCoords, PathDeviation, Place } from '../lib/types/navigation';
+import { useLocationMonitoring } from '../hooks/use-location-monitoring';
+import { DeviationWarning } from './DeviationWarning';
 
-interface LocationCoords {
-  latitude: number;
-  longitude: number;
-}
-
-interface Place {
-  id: string;
-  name: string;
-  address: string;
-  location: {
-    lat: number;
-    lng: number;
-  };
-}
+import { calculateDistance, assessDanger } from '../lib/services/location-service';
 
 const SearchBar: React.FC = () => {
   const router = useRouter();
-  const [currentLocation, setCurrentLocation] = useState<LocationCoords | null>(null);
   const [destination, setDestination] = useState<LocationCoords | null>(null);
   const [destinationName, setDestinationName] = useState<string>('');
-  const [loadingLocation, setLoadingLocation] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<Place[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isMonitoringPath, setIsMonitoringPath] = useState<boolean>(false);
 
-  // Get and monitor user's location
-  useEffect(() => {
-    let locationSubscription: Location.LocationSubscription | null = null;
+  // Use our custom location monitoring hook
+  const { currentLocation, loadingLocation, pathDeviation } = useLocationMonitoring({
+    destination,
+    isMonitoringPath
+  });
 
-    const setupLocation = async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Permission Denied', 'Location access is required.');
-          setLoadingLocation(false);
-          return;
-        }
-
-        // Get initial location
-        const initialLocation = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.BestForNavigation,
-        });
-
-        console.log('Initial Location:', {
-          latitude: initialLocation.coords.latitude,
-          longitude: initialLocation.coords.longitude,
-          timestamp: new Date(initialLocation.timestamp).toLocaleString(),
-          accuracy: initialLocation.coords.accuracy,
-          speed: initialLocation.coords.speed,
-        });
-
-        setCurrentLocation({
-          latitude: initialLocation.coords.latitude,
-          longitude: initialLocation.coords.longitude,
-        });
-
-        // Start watching location updates
-        locationSubscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.BestForNavigation,
-            timeInterval: 1000, // Update every second
-            distanceInterval: 1, // Update every meter
-          },
-          (location) => {
-            console.log('Location Update:', {
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              timestamp: new Date(location.timestamp).toLocaleString(),
-              accuracy: location.coords.accuracy,
-              speed: location.coords.speed,
-            });
-
-            setCurrentLocation({
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            });
-          }
-        );
-
-      } catch (err) {
-        console.error('Error setting up location:', err);
-        Alert.alert('Error', 'Failed to get current location.');
-      } finally {
-        setLoadingLocation(false);
-      }
-    };
-
-    setupLocation();
-
-    // Cleanup subscription when component unmounts
-    return () => {
-      if (locationSubscription) {
-        locationSubscription.remove();
-      }
-    };
-  }, []);
+  // Location monitoring is now handled by the useLocationMonitoring hook
 
   const searchPlaces = async (query: string) => {
     if (!query.trim() || !currentLocation) return;
@@ -167,6 +89,9 @@ const SearchBar: React.FC = () => {
       Alert.alert('Missing Information', 'Please select a destination.');
       return;
     }
+
+    // Start monitoring path deviation
+    setIsMonitoringPath(true);
 
     router.push({
       pathname: '/(tabs)/trip',
@@ -265,21 +190,61 @@ const SearchBar: React.FC = () => {
             </Text>
           </TouchableOpacity>
 
-          {/* Debug */}
+          {/* Debug and Path Monitoring */}
           <View style={styles.debugInfo}>
             <Text style={styles.debugText}>
               📍 Current: {currentLocation.latitude.toFixed(6)}, {currentLocation.longitude.toFixed(6)}
             </Text>
             {destination && (
-              <Text style={styles.debugText}>
-                🎯 Destination: {destination.latitude.toFixed(6)}, {destination.longitude.toFixed(6)}
-              </Text>
+              <>
+                <Text style={styles.debugText}>
+                  🎯 Destination: {destination.latitude.toFixed(6)}, {destination.longitude.toFixed(6)}
+                </Text>
+                {pathDeviation && (
+                  <View style={[styles.deviationInfo, styles[`danger${pathDeviation.dangerLevel}`]]}>
+                    <Text style={styles.deviationText}>
+                      ⚠️ {Math.round(pathDeviation.distance)}m off path
+                    </Text>
+                    <Text style={styles.deviationText}>
+                      Risk Level: {pathDeviation.dangerLevel}
+                    </Text>
+                    <Text style={styles.deviationReason}>
+                      {pathDeviation.reason}
+                    </Text>
+                  </View>
+                )}
+              </>
             )}
           </View>
         </View>
       </SafeAreaView>
     </SafeAreaProvider>
   );
+};
+
+type DangerLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+type StyleProps = {
+  [key: string]: any;
+  container: any;
+  iosInput: any;
+  searchContainer: any;
+  textInput: any;
+  searchingIndicator: any;
+  searchResultsList: any;
+  searchResultItem: any;
+  placeName: any;
+  placeAddress: any;
+  button: any;
+  buttonText: any;
+  debugInfo: any;
+  debugText: any;
+  loadingContainer: any;
+  deviationInfo: any;
+  deviationText: any;
+  deviationReason: any;
+} & {
+  [K in `danger${DangerLevel}`]: any;
 };
 
 const styles = StyleSheet.create({
@@ -397,6 +362,30 @@ const styles = StyleSheet.create({
     flex: 1, 
     justifyContent: 'center', 
     alignItems: 'center' 
+  },
+  deviationInfo: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 8,
+  },
+  deviationText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  deviationReason: {
+    color: '#fff',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  dangerLOW: {
+    backgroundColor: '#2ecc71',
+  },
+  dangerMEDIUM: {
+    backgroundColor: '#f1c40f',
+  },
+  dangerHIGH: {
+    backgroundColor: '#e74c3c',
   },
 });
 
