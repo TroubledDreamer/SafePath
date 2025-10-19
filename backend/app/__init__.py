@@ -38,7 +38,7 @@ def create_app():
         register_blueprints(app)
 
     @app.route('/')
-    def index(): return jsonify({'message':'Welcome to Gym API'})
+    def index(): return jsonify({'message':'Welcome to Hackathon API'})
 
     return app
 
