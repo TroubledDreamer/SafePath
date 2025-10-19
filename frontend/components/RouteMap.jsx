@@ -9,104 +9,77 @@ export default function RouteMap() {
   const mapRef = useRef(null);
 
   useEffect(() => {
+    let subscription = null;
+
     const startTracking = async () => {
-      // Request permission to access location
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      console.log("Permission status:", status);
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+          Alert.alert("Permission Denied", "Location access is required.");
+          return;
+        }
 
-      if (status !== "granted") {
-        Alert.alert("Permission Denied", "Location access is required.");
-        return;
-      }
-
-      // Get initial position
-      const location = await Location.getCurrentPositionAsync({});
-      const initialCoords = location.coords;
-      setCurrentLocation(initialCoords);
-      setRouteCoordinates([initialCoords]);
-      
-      console.log("🚀 STARTING GPS TRACKING");
-      console.log("📍 Initial position:", {
-        latitude: initialCoords.latitude,
-        longitude: initialCoords.longitude,
-        accuracy: initialCoords.accuracy,
-        timestamp: new Date().toISOString()
-      });
-
-      // Subscribe to live position updates
-      const subscription = await Location.watchPositionAsync(
-        {
+        // Get initial GPS fix
+        const initialLoc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 1000, // every second
-          distanceInterval: 0, // update on any change
-        },
-        (loc) => {
-          const coords = loc.coords;
-          const newLocation = {
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            accuracy: coords.accuracy,
-            speed: coords.speed,
-            heading: coords.heading,
-            timestamp: new Date().toISOString()
-          };
+        });
 
-          setCurrentLocation(newLocation);
-          setRouteCoordinates(prev => [...prev, newLocation]);
+        const initialCoords = {
+          latitude: initialLoc.coords.latitude,
+          longitude: initialLoc.coords.longitude,
+          accuracy: initialLoc.coords.accuracy,
+          speed: initialLoc.coords.speed,
+          heading: initialLoc.coords.heading,
+          timestamp: new Date().toISOString(),
+        };
 
-          // Enhanced logging for real-time GPS changes
-          console.log("📡 GPS UPDATE →", {
-            lat: coords.latitude.toFixed(6),
-            lng: coords.longitude.toFixed(6),
-            accuracy: `${coords.accuracy?.toFixed(1) || 'N/A'}m`,
-            speed: coords.speed ? `${(coords.speed * 3.6).toFixed(1)} km/h` : 'N/A',
-            heading: coords.heading ? `${coords.heading.toFixed(0)}°` : 'N/A',
-            timestamp: new Date().toLocaleTimeString(),
-            totalPoints: routeCoordinates.length + 1
-          });
+        setCurrentLocation(initialCoords);
+        setRouteCoordinates([initialCoords]);
 
-          // Log route statistics every 10 points
-          if ((routeCoordinates.length + 1) % 10 === 0) {
-            console.log("📊 ROUTE STATS →", {
-              totalPoints: routeCoordinates.length + 1,
-              duration: `${routeCoordinates.length + 1} seconds`,
-              startTime: routeCoordinates[0]?.timestamp,
-              currentTime: newLocation.timestamp
+        // Start watching GPS
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.BestForNavigation,
+            timeInterval: 1000,
+            distanceInterval: 0,
+          },
+          (loc) => {
+            const newCoords = {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              accuracy: loc.coords.accuracy,
+              speed: loc.coords.speed,
+              heading: loc.coords.heading,
+              timestamp: new Date().toISOString(),
+            };
+
+            setCurrentLocation(newCoords);
+            setRouteCoordinates((prev) => [...prev, newCoords]);
+
+            mapRef.current?.animateToRegion({
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              latitudeDelta: 0.005,
+              longitudeDelta: 0.005,
             });
           }
-
-          // Smoothly move map center
-          mapRef.current?.animateToRegion({
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            latitudeDelta: 0.005,
-            longitudeDelta: 0.005,
-          });
-        }
-      );
-
-      // Clean up subscription when unmounted
-      return () => {
-        console.log("🛑 STOPPING GPS TRACKING");
-        console.log("📈 FINAL ROUTE SUMMARY →", {
-          totalPoints: routeCoordinates.length,
-          startLocation: routeCoordinates[0],
-          endLocation: routeCoordinates[routeCoordinates.length - 1],
-          duration: `${routeCoordinates.length} seconds`
-        });
-        subscription?.remove();
-      };
+        );
+      } catch (err) {
+        console.error("Error getting location:", err);
+        Alert.alert("Error", "Failed to get GPS location.");
+      }
     };
 
     startTracking();
+
+    return () => {
+      subscription?.remove();
+    };
   }, []);
 
-  // Log when route coordinates update
-  useEffect(() => {
-    if (routeCoordinates.length > 0) {
-      console.log(`🗺️ Route now has ${routeCoordinates.length} coordinate points`);
-    }
-  }, [routeCoordinates.length]);
+  if (!currentLocation) {
+    return <View style={styles.container} />; // or a loading indicator
+  }
 
   return (
     <View style={styles.container}>
@@ -114,28 +87,25 @@ export default function RouteMap() {
         ref={mapRef}
         style={styles.map}
         initialRegion={{
-          latitude: 37.78825, // fallback if GPS not ready
-          longitude: -122.4324,
+          latitude: currentLocation.latitude,
+          longitude: currentLocation.longitude,
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         }}
-        showsUserLocation={false} // We're using custom marker
+        showsUserLocation={false}
         showsMyLocationButton={true}
         followsUserLocation={true}
       >
-        {currentLocation && (
-          <Marker
-            coordinate={{
-              latitude: currentLocation.latitude,
-              longitude: currentLocation.longitude,
-            }}
-            title="You are here"
-            description="Live GPS tracking active"
-            pinColor="blue"
-          />
-        )}
-        
-        {/* Optional: Show all route points as markers */}
+        <Marker
+          coordinate={{
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+          }}
+          title="You are here"
+          description="Live GPS tracking active"
+          pinColor="blue"
+        />
+
         {routeCoordinates.map((coord, index) => (
           <Marker
             key={index}
@@ -143,7 +113,7 @@ export default function RouteMap() {
               latitude: coord.latitude,
               longitude: coord.longitude,
             }}
-            pinColor={index === 0 ? "green" : "red"} // Start = green, others = red
+            pinColor={index === 0 ? "green" : "red"}
             title={index === 0 ? "Start" : `Point ${index}`}
             description={`Accuracy: ${coord.accuracy?.toFixed(1)}m`}
           />
