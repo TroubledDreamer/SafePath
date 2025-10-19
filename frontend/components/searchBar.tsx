@@ -32,9 +32,11 @@ const SearchBar: React.FC = () => {
   const [searchResults, setSearchResults] = useState<Place[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Get user's current location
+  // Get and monitor user's location
   useEffect(() => {
-    const getLocation = async () => {
+    let locationSubscription: Location.LocationSubscription | null = null;
+
+    const setupLocation = async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
@@ -43,23 +45,63 @@ const SearchBar: React.FC = () => {
           return;
         }
 
-        const loc = await Location.getCurrentPositionAsync({
+        // Get initial location
+        const initialLocation = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.BestForNavigation,
         });
 
-        setCurrentLocation({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
+        console.log('Initial Location:', {
+          latitude: initialLocation.coords.latitude,
+          longitude: initialLocation.coords.longitude,
+          timestamp: new Date(initialLocation.timestamp).toLocaleString(),
+          accuracy: initialLocation.coords.accuracy,
+          speed: initialLocation.coords.speed,
         });
+
+        setCurrentLocation({
+          latitude: initialLocation.coords.latitude,
+          longitude: initialLocation.coords.longitude,
+        });
+
+        // Start watching location updates
+        locationSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.BestForNavigation,
+            timeInterval: 1000, // Update every second
+            distanceInterval: 1, // Update every meter
+          },
+          (location) => {
+            console.log('Location Update:', {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              timestamp: new Date(location.timestamp).toLocaleString(),
+              accuracy: location.coords.accuracy,
+              speed: location.coords.speed,
+            });
+
+            setCurrentLocation({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            });
+          }
+        );
+
       } catch (err) {
-        console.error('Error fetching location:', err);
+        console.error('Error setting up location:', err);
         Alert.alert('Error', 'Failed to get current location.');
       } finally {
         setLoadingLocation(false);
       }
     };
 
-    getLocation();
+    setupLocation();
+
+    // Cleanup subscription when component unmounts
+    return () => {
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
   }, []);
 
   const searchPlaces = async (query: string) => {
