@@ -1,28 +1,28 @@
-import { Image } from 'expo-image';
+import 'react-native-get-random-values';
 
+import { Image } from 'expo-image';
 import { Link } from 'expo-router';
-import { View, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
+import { View, StyleSheet, SafeAreaView } from 'react-native';
 import SearchBar from '@/components/searchBar';
 
 export default function HomeScreen() {
   return (
-    <View>
+    <SafeAreaView style={styles.container}>
+      {/* Optional top spacing */}
+      <View style={{ marginTop: 100 }} />
 
-        <ScrollView>
-
-                  <View style={{marginTop: 100}}> 
-
-            </View>
-          <SearchBar/>
-        </ScrollView>
-
-
-    </View>
-  
+      {/* Core Search UI */}
+      <SearchBar />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+  },
   titleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
