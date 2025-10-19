@@ -1,6 +1,6 @@
 # schemas.py
 from marshmallow import Schema, fields, validate, validates, validates_schema, ValidationError
-from app.models import User, Driver, UserContact   # <-- changed from EmergencyContact to UserContact
+from app.models import User, Driver, UserContact
 from app import db
 
 # --------- Helpers ---------
@@ -16,30 +16,32 @@ class UserInfoSchema(Schema):
     id = fields.Int(dump_only=True)
     user_id = fields.Int(dump_only=True)
     gender = fields.Str(required=True, validate=validate.OneOf(['M', 'F', 'Other']))
-    height = fields.Decimal(as_string=True)  # store as string to avoid float issues; map to DECIMAL in DB
+    # DB column is VARCHAR(50)
+    height = fields.String(required=True, validate=validate.Length(max=50))
     date_of_birth = fields.Date(required=True)
-    # phone is VARCHAR(50) in DB; don't use Int (leading +, spaces, etc.)
-    phone_number = fields.String(validate=validate.Length(max=50))
+    # DB is VARCHAR(50) NOT NULL UNIQUE
+    phone_number = fields.String(required=True, validate=validate.Length(max=50))
 
 class UserSchema(Schema):
     id = fields.Int(dump_only=True)
-    name = fields.Str(required=True, validate=validate.Length(max=100))
+    # DB is VARCHAR(50)
+    name = fields.Str(required=True, validate=validate.Length(max=50))
     email = fields.Email(required=True)
     password = fields.Str(required=True, load_only=True)
     created_at = fields.DateTime(dump_only=True)
-    # Allow nested info on create; not strictly required for all updates
+
+    # Allow nested info on create/update
     info = fields.Nested(UserInfoSchema, attribute="user_information", required=False)
 
     # Optionally expose contacts (dump only)
     contacts = fields.List(
         fields.Nested(lambda: UserContactSchema(exclude=("user_id",))),
         dump_only=True,
-        attribute="contacts"  # relationship on User model
+        attribute="contacts"
     )
 
     @validates("email")
     def _unique_email(self, value, **kwargs):
-        # If updating, set schema.context["user_id"] to current user id so we don't flag self as duplicate
         exclude_id = self.context.get("user_id") if hasattr(self, "context") else None
         validate_unique_email(value, exclude_user_id=exclude_id)
 
@@ -47,19 +49,15 @@ class DriverSchema(Schema):
     id = fields.Int(dump_only=True)
     plate = fields.String(required=True, validate=validate.Length(max=50))
     car_type = fields.String(required=True, validate=validate.Length(max=100))
-    user_id = fields.Int(required=True)
-    # created/updated timestamps can be dump_only if present on model
+    # driver.user_id is nullable in DB → not required
+    user_id = fields.Int(required=False, allow_none=True)
     created_at = fields.DateTime(dump_only=True)
-    updated_at = fields.DateTime(dump_only=True)
 
 class UserContactSchema(Schema):
     """
-    Self-referential contacts:
-    PRIMARY KEY (user_id, contact_user_id)
+    Self-referential contacts; DB enforces UNIQUE(user_id, contact_user_id).
     """
-    # owner of the contact list
     user_id = fields.Int(required=True)
-    # the contact (another user)
     contact_user_id = fields.Int(required=True)
     label = fields.String(validate=validate.Length(max=100))
     is_emergency = fields.Boolean(load_default=False)
@@ -72,7 +70,6 @@ class UserContactSchema(Schema):
 
     @validates_schema
     def _pair_unique(self, data, **kwargs):
-        # Enforce (user_id, contact_user_id) uniqueness at the app layer (DB also has PK/UNIQUE)
         uid = data.get("user_id")
         cid = data.get("contact_user_id")
         if uid is None or cid is None:
