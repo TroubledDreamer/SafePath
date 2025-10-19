@@ -22,61 +22,57 @@ class BaseModel(db.Model):
         for c in inspect(self).mapper.column_attrs:
             out[c.key] = self._serialize_value(getattr(self, c.key))
         return out
+    
+class UserInformation(BaseModel):
+    __tablename__ = 'user_information'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    gender = db.Column(db.Enum('M', 'F', 'Other'), nullable=False)
+    height = db.Column(db.Numeric(6, 3))
+    phone_number = db.Column(db.Integer)
+    date_of_birth = db.Column(db.Date, nullable=False)
+
+    user = db.relationship('User', back_populates='user_information', uselist=False)
 
 
 class User(BaseModel):
-    __tablename__ = 'Users'
-
+    __tablename__ = 'user'
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    username = db.Column(db.String(50), nullable=False, unique=True)
-    password = db.Column(db.String(255), nullable=False)
-    email = db.Column(db.String(100), nullable=False, unique=True)
-    gender = db.Column(db.String(50), nullable=False)
-    height = db.Column(db.String(50), nullable=False)             
-    phone_number = db.Column(db.String(50), nullable=False, unique=True)
-    image = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, server_default=func.current_timestamp())
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    password = db.Column(db.String(512), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Relationships
-    driver = db.relationship(
-        'Driver',
-        back_populates='user',
-        uselist=False,                      
-        cascade='all, delete-orphan'
-    )
-    emergency_contacts = db.relationship(
-        'EmergencyContact',
-        back_populates='user',
-        cascade='all, delete-orphan'
-    )
+    user_information = db.relationship('UserInformation', back_populates='user', uselist=False)
+    emergency_contacts = db.relationship('Emergency_contact', back_populates='user')
+    drivers = db.relationship('Driver', back_populates='user')
+
+    def to_dict(self):
+        data = super().to_dict()
+        data["user_information"] = self.user_information.to_dict() if self.user_information else None
+        return data
 
 
 class Driver(BaseModel):
-    __tablename__ = 'Drivers'
-
+    __tablename__ = 'driver'
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     plate = db.Column(db.String(50), nullable=False, unique=True)
     car_type = db.Column(db.String(100), nullable=False)
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey('Users.id', ondelete='CASCADE'),
-        nullable=False,
-        unique=True                       
-    )
-
-    user = db.relationship('User', back_populates='driver')
+    date = db.Column(db.DateTime)
+    user = db.relationship('User', back_populates='drivers')
 
 
-class EmergencyContact(BaseModel):
-    __tablename__ = 'Emergency_Contacts'
+class Emergency_contact(BaseModel):
+    __tablename__ = 'emergency_contact'
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey('Users.id', ondelete='CASCADE'),
-        nullable=False
-    )
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     display_name = db.Column(db.String(100), nullable=False)
     contact_phone = db.Column(db.String(50), nullable=False)
 
     user = db.relationship('User', back_populates='emergency_contacts')
+
+
+

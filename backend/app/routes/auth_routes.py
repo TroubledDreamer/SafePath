@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from app.models import DirectoryTable  # Import the model
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from app.models import User, UserInformation, db
@@ -33,23 +32,14 @@ def register():
     # Create user_information
     user_info = UserInformation(
         user_id=user.id,
-        sex=info["sex"],
-        height_cm=info.get("height_cm"),
-        date_of_birth=info["date_of_birth"]
+        gender=info["gender"],
+        height=info.get("height"),
+        date_of_birth=info["date_of_birth"],
+        phone_number = info["phone_number"]
+
     )
     db.session.add(user_info)
 
-    # 🚀 Create main folders for each category
-    for category in ["dietary", "activity", "intake", "other"]:
-        folder = DirectoryTable(
-            user_id=user.id,
-            name=f"Main {category.capitalize()} Folder",
-            category=category,
-            is_main=True,
-            parent_id=None,
-            is_public=False,
-        )
-        db.session.add(folder)
 
     db.session.commit()
 
